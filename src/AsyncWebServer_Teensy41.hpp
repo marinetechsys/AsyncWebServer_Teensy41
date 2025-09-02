@@ -588,6 +588,7 @@ class AsyncWebHandler
     ArRequestFilterFunction _filter;
     String _username;
     String _password;
+    String _uri;
 
   public:
     AsyncWebHandler(): _username(""), _password("") {}
@@ -641,6 +642,13 @@ class AsyncWebHandler
     virtual bool isRequestHandlerTrivial() 
     {
       return true;
+    }
+
+    /////////////////////////////////////////////////
+
+    virtual String& getUri()
+    {
+      return _uri;
     }
 };
 

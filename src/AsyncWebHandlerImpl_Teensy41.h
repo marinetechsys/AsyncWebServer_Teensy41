@@ -52,7 +52,6 @@ class AsyncStaticWebHandler: public AsyncWebHandler
     uint8_t _countBits(const uint8_t value) const;
 
   protected:
-    String _uri;
     String _path;
     String _cache_control;
     String _last_modified;
@@ -86,7 +85,6 @@ class AsyncCallbackWebHandler: public AsyncWebHandler
 {
   private:
   protected:
-    String _uri;
     WebRequestMethodComposite _method;
     ArRequestHandlerFunction _onRequest;
     ArUploadHandlerFunction _onUpload;
