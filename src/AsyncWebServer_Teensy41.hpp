@@ -591,7 +591,7 @@ class AsyncWebHandler
     String _uri;
 
   public:
-    AsyncWebHandler(): _username(""), _password("") {}
+    AsyncWebHandler(): _username(""), _password(""), _uri("") {}
 
     /////////////////////////////////////////////////
      
