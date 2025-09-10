@@ -222,7 +222,7 @@ size_t webSocketSendFrame(AsyncClient *client, bool final, uint8_t opcode, bool 
     memcpy(buf + (headLen - 4), mbuf, 4);
   }
 
-  if (client->add((const char *)buf, headLen) != headLen)
+  if (client->add((const char *)buf, headLen, ASYNC_WRITE_FLAG_COPY) != headLen)
   {
     LOGDEBUG1("Error adding header, bytes =", headLen);
 
@@ -242,7 +242,7 @@ size_t webSocketSendFrame(AsyncClient *client, bool final, uint8_t opcode, bool 
         data[i] = data[i] ^ mbuf[i % 4];
     }
 
-    if (client->add((const char *)data, len) != len)
+    if (client->add((const char *)data, len, ASYNC_WRITE_FLAG_COPY) != len)
     {
       LOGDEBUG1("Error adding data, bytes =", len);
 
@@ -1534,17 +1534,41 @@ size_t AsyncWebSocket::printf(uint32_t id, const char *format, ...)
 {
   AsyncWebSocketClient * c = client(id);
 
-  if (c)
+  if (!c)
   {
-    va_list arg;
-    va_start(arg, format);
-    size_t len = c->printf(format, arg);
-    va_end(arg);
+    return 0;
+  }
 
+  va_list arg;
+  va_start(arg, format);
+
+  // First, try with a small stack buffer
+  char temp[MAX_PRINTF_LEN];
+  size_t len = vsnprintf(temp, MAX_PRINTF_LEN, format, arg);
+  va_end(arg);
+
+  if (len < MAX_PRINTF_LEN)
+  {
+    // Fits in temp
+    c->text(temp, len);
     return len;
   }
 
-  return 0;
+  // Needs a larger buffer
+  char* buffer = new (std::nothrow) char[len + 1];
+  if (!buffer)
+  {
+    return 0;
+  }
+
+  va_start(arg, format);
+  vsnprintf(buffer, len + 1, format, arg);
+  va_end(arg);
+
+  c->text(buffer, len);
+  delete[] buffer;
+
+  return len;
 }
 
 /////////////////////////////////////////////////
@@ -1882,7 +1906,7 @@ void AsyncWebSocketResponse::_respond(AsyncWebServerRequest * request)
   }
 
   String out = _assembleHead(request->version());
-  request->client()->write(out.c_str(), _headLength);
+  request->client()->write(out.c_str(), _headLength, ASYNC_WRITE_FLAG_COPY);
 
   _state = RESPONSE_WAIT_ACK;
 }

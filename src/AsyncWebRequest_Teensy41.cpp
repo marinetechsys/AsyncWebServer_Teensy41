@@ -937,7 +937,7 @@ void AsyncWebServerRequest::_parseLine()
       {
         const char * response = "HTTP/1.1 100 Continue\r\n\r\n";
         //_client->write(response, os_strlen(response));
-        _client->write(response, strlen(response));
+        _client->write(response, strlen(response), ASYNC_WRITE_FLAG_COPY);
       }
 
       //check handler for authentication
@@ -1500,4 +1500,3 @@ bool AsyncWebServerRequest::isExpectedRequestedConnType(RequestedConnectionType 
 }
 
 /////////////////////////////////////////////////
-

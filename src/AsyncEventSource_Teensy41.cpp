@@ -217,7 +217,7 @@ size_t AsyncEventSourceMessage::send(AsyncClient *client)
     return 0;
   }
 
-  size_t sent = client->add((const char *)_data, len);
+  size_t sent = client->add((const char *)_data, len, ASYNC_WRITE_FLAG_COPY);
 
   if (client->canSend())
     client->send();
@@ -540,7 +540,7 @@ AsyncEventSourceResponse::AsyncEventSourceResponse(AsyncEventSource *server)
 void AsyncEventSourceResponse::_respond(AsyncWebServerRequest *request)
 {
   String out = _assembleHead(request->version());
-  request->client()->write(out.c_str(), _headLength);
+  request->client()->write(out.c_str(), _headLength, ASYNC_WRITE_FLAG_COPY);
   _state = RESPONSE_WAIT_ACK;
 }
 
@@ -557,5 +557,3 @@ size_t AsyncEventSourceResponse::_ack(AsyncWebServerRequest *request, size_t len
 }
 
 /////////////////////////////////////////////////////////
-
-

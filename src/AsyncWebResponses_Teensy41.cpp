@@ -409,7 +409,7 @@ void AsyncBasicResponse::_respond(AsyncWebServerRequest *request)
   {
     LOGDEBUG("Step 1");
 
-    _writtenLength += request->client()->write(out.c_str(), outLen);
+    _writtenLength += request->client()->write(out.c_str(), outLen, ASYNC_WRITE_FLAG_COPY);
     _state = RESPONSE_WAIT_ACK;
   }
   else if (_contentLength && space >= outLen + _contentLength)
@@ -424,7 +424,7 @@ void AsyncBasicResponse::_respond(AsyncWebServerRequest *request)
 
     out += _content;
     outLen += _contentLength;
-    _writtenLength += request->client()->write(out.c_str(), outLen);
+    _writtenLength += request->client()->write(out.c_str(), outLen, ASYNC_WRITE_FLAG_COPY);
 
     _state = RESPONSE_WAIT_ACK;
   }
@@ -446,7 +446,7 @@ void AsyncBasicResponse::_respond(AsyncWebServerRequest *request)
 
     LOGDEBUG1("partial =", partial);
 
-    _writtenLength += request->client()->write(partial.c_str(), partial.length());
+    _writtenLength += request->client()->write(partial.c_str(), partial.length(), ASYNC_WRITE_FLAG_COPY);
 
     _state = RESPONSE_CONTENT;
   }
@@ -487,7 +487,7 @@ void AsyncBasicResponse::_respond(AsyncWebServerRequest *request)
 
     LOGDEBUG1("out =", out);
 
-    _writtenLength += request->client()->write(out.c_str(), outLen);
+    _writtenLength += request->client()->write(out.c_str(), outLen, ASYNC_WRITE_FLAG_COPY);
     _state = RESPONSE_CONTENT;
   }
   else
@@ -539,14 +539,14 @@ size_t AsyncBasicResponse::_ack(AsyncWebServerRequest *request, size_t len, uint
         tmpString = _partialHeader.substring(space);
         _partialHeader = tmpString;
 
-        _writtenLength += request->client()->write(_subHeader.c_str(), space);
+        _writtenLength += request->client()->write(_subHeader.c_str(), space, ASYNC_WRITE_FLAG_COPY);
 
         return (_partialHeader.length());
       }
       else
       {
         // _partialHeader is <= space length - therefore send the whole thing, and make the remaining length = to the _contrentLength
-        _writtenLength += request->client()->write(_partialHeader.c_str(), _partialHeader.length());
+        _writtenLength += request->client()->write(_partialHeader.c_str(), _partialHeader.length(), ASYNC_WRITE_FLAG_COPY);
 
         _partialHeader = String();
 
@@ -567,12 +567,12 @@ size_t AsyncBasicResponse::_ack(AsyncWebServerRequest *request, size_t len, uint
       {
         LOGDEBUG1("In space>available : output =", _contentCstr);
 
-        _writtenLength += request->client()->write(_contentCstr, available);
+        _writtenLength += request->client()->write(_contentCstr, available, ASYNC_WRITE_FLAG_COPY);
         //_contentCstr[0] = '\0';
       }
       else
       {
-        _writtenLength += request->client()->write(_content.c_str(), available);
+        _writtenLength += request->client()->write(_content.c_str(), available, ASYNC_WRITE_FLAG_COPY);
         _content = String();
       }
 
@@ -612,7 +612,7 @@ size_t AsyncBasicResponse::_ack(AsyncWebServerRequest *request, size_t len, uint
 
     LOGDEBUG1("In space>available : output =", out);
 
-    _writtenLength += request->client()->write(out.c_str(), space);
+    _writtenLength += request->client()->write(out.c_str(), space, ASYNC_WRITE_FLAG_COPY);
 
     return space;
   }
@@ -687,7 +687,7 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
     {
       String out = _head.substring(0, space);
       _head = _head.substring(space);
-      _writtenLength += request->client()->write(out.c_str(), out.length());
+      _writtenLength += request->client()->write(out.c_str(), out.length(), ASYNC_WRITE_FLAG_COPY);
 
       return out.length();
     }
@@ -695,47 +695,51 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
 
   if (_state == RESPONSE_CONTENT)
   {
-    size_t outLen;
-
-    if (_chunked)
+    if (space == 0)
     {
-      if (space <= 8)
-      {
-        return 0;
-      }
-
-      outLen = space;
-    }
-    else if (!_sendContentLength)
-    {
-      outLen = space;
-    }
-    else
-    {
-      outLen = ((_contentLength - _sentLength) > space) ? space : (_contentLength - _sentLength);
-    }
-
-    uint8_t *buf = (uint8_t *)malloc(outLen + headLen);
-
-    if (!buf)
-    {
-      LOGDEBUG1("AsyncAbstractResponse::_ack malloc failed, size =", outLen + headLen);
-
       return 0;
     }
 
+    // We will send at most "space" bytes of body (plus any pending headers).
+    // Allocate a buffer large enough for the pending head + current body window.
+    uint8_t* buf = (uint8_t*)malloc(headLen + space);
+
+    if (!buf)
+    {
+      LOGDEBUG1("AsyncAbstractResponse::_ack malloc failed, size =", headLen + space);
+      return 0;
+    }
+
+    size_t outPos = 0;
+
     if (headLen)
     {
-      memcpy(buf, _head.c_str(), _head.length());
+      memcpy(buf, _head.c_str(), headLen);
+      outPos = headLen;
+      // We'll clear _head after building the full output buffer.
     }
 
     size_t readLen = 0;
 
     if (_chunked)
     {
-      // HTTP 1.1 allows leading zeros in chunk length. Or spaces may be added.
-      // See RFC2616 sections 2, 3.6.1.
-      readLen = _fillBufferAndProcessTemplates(buf + headLen + 6, outLen - 8);
+      // Build a properly framed chunk: <hex>\r\n<payload>\r\n
+      // For non-empty chunks we reserve worst-case kMaxHexLen to later compact.
+      const size_t kMaxHexLen = 8;
+
+      // Compute how much payload we can try to read this round.
+      // If we don't even have room for a non-empty chunk header (kMaxHexLen+4),
+      // let maxData be 0 so we can still try to send the terminating chunk ("0\r\n\r\n", 5 bytes).
+      const size_t minTermChunk = 5;  // "0\r\n\r\n"
+      size_t maxData = 0;
+
+      if (space >= (kMaxHexLen + 4))
+      {
+        maxData = space - (kMaxHexLen + 4);
+      }
+
+      // Fill payload after reserved space for hex and CRLF
+      readLen = _fillBufferAndProcessTemplates(buf + outPos + kMaxHexLen + 2, maxData);
 
       if (readLen == RESPONSE_TRY_AGAIN)
       {
@@ -743,29 +747,75 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
         return 0;
       }
 
-      outLen = sprintf((char*)buf + headLen, "%x", readLen) + headLen;
+      if (readLen == 0)
+      {
+        // Terminating chunk: ensure at least "0\r\n\r\n" fits now
+        if (space < minTermChunk)
+        {
+          free(buf);
+          return 0;
+        }
 
-      while (outLen < headLen + 4)
-        buf[outLen++] = ' ';
+        buf[outPos++] = '0';
+        buf[outPos++] = '\r';
+        buf[outPos++] = '\n';
+        buf[outPos++] = '\r';
+        buf[outPos++] = '\n';
+      }
+      else
+      {
+        // We have payload; compute actual hex length, compact payload back,
+        // then append CRLF, payload, CRLF.
+        char hexBuf[kMaxHexLen + 1];
+        const size_t hexLen = (size_t)snprintf(hexBuf, sizeof(hexBuf), "%x", (unsigned int)readLen);
 
-      buf[outLen++] = '\r';
-      buf[outLen++] = '\n';
-      outLen += readLen;
-      buf[outLen++] = '\r';
-      buf[outLen++] = '\n';
+        // Move payload back so it follows "<hex>\r\n"
+        const size_t delta = kMaxHexLen - hexLen;
+        if (delta)
+        {
+          memmove(buf + outPos + hexLen + 2,                // destination
+                  buf + outPos + kMaxHexLen + 2,            // source
+                  readLen);
+        }
+
+        // Write "<hex>\r\n"
+        memcpy(buf + outPos, hexBuf, hexLen);
+        outPos += hexLen;
+        buf[outPos++] = '\r';
+        buf[outPos++] = '\n';
+
+        // Payload
+        outPos += readLen;
+
+        // Trailing CRLF
+        buf[outPos++] = '\r';
+        buf[outPos++] = '\n';
+      }
     }
     else
     {
-      readLen = _fillBufferAndProcessTemplates(buf + headLen, outLen);
+      // Non-chunked: limit by content-length if present, else fill the window.
+      size_t dataBudget = space;
 
-      if (readLen == RESPONSE_TRY_AGAIN)
+      if (_sendContentLength)
       {
-        free(buf);
-
-        return 0;
+        const size_t remaining = (_contentLength > _sentLength) ? (_contentLength - _sentLength) : 0;
+        if (dataBudget > remaining)
+          dataBudget = remaining;
       }
 
-      outLen = readLen + headLen;
+      if (dataBudget > 0)
+      {
+        readLen = _fillBufferAndProcessTemplates(buf + outPos, dataBudget);
+
+        if (readLen == RESPONSE_TRY_AGAIN)
+        {
+          free(buf);
+          return 0;
+        }
+
+        outPos += readLen;
+      }
     }
 
     if (headLen)
@@ -773,29 +823,35 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
       _head = String();
     }
 
-    if (outLen)
+    if (outPos > 0)
     {
-      _writtenLength += request->client()->write((const char*)buf, outLen);
+      _writtenLength += request->client()->write((const char*)buf, outPos, ASYNC_WRITE_FLAG_COPY);
     }
 
     if (_chunked)
     {
+      // Track only payload bytes (not framing)
       _sentLength += readLen;
     }
     else
     {
-      _sentLength += outLen - headLen;
+      _sentLength += (outPos > headLen) ? (outPos - headLen) : 0;
     }
 
     free(buf);
 
-    if ((_chunked && readLen == 0) || (!_sendContentLength && outLen == 0) || (!_chunked && _sentLength == _contentLength))
+    // Done if:
+    // - chunked and we just sent the terminating chunk (readLen == 0)
+    // - no content-length and we produced no new body (outPos == headLen)
+    // - not chunked and we've sent all bytes
+    if ((_chunked && readLen == 0) ||
+        (!_sendContentLength && outPos == headLen) ||
+        (!_chunked && _sentLength == _contentLength))
     {
       _state = RESPONSE_WAIT_ACK;
     }
 
-    return outLen;
-
+    return outPos;
   }
   else if (_state == RESPONSE_WAIT_ACK)
   {
@@ -1160,4 +1216,3 @@ size_t AsyncResponseStream::write(uint8_t data)
 }
 
 /////////////////////////////////////////////////
-
