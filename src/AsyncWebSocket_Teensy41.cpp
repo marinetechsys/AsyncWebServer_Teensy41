@@ -222,7 +222,7 @@ size_t webSocketSendFrame(AsyncClient *client, bool final, uint8_t opcode, bool 
     memcpy(buf + (headLen - 4), mbuf, 4);
   }
 
-  if (client->add((const char *)buf, headLen) != headLen)
+  if (client->add((const char *)buf, headLen, ASYNC_WRITE_FLAG_COPY) != headLen)
   {
     LOGDEBUG1("Error adding header, bytes =", headLen);
 
@@ -242,7 +242,7 @@ size_t webSocketSendFrame(AsyncClient *client, bool final, uint8_t opcode, bool 
         data[i] = data[i] ^ mbuf[i % 4];
     }
 
-    if (client->add((const char *)data, len) != len)
+    if (client->add((const char *)data, len, ASYNC_WRITE_FLAG_COPY) != len)
     {
       LOGDEBUG1("Error adding data, bytes =", len);
 
@@ -1906,7 +1906,7 @@ void AsyncWebSocketResponse::_respond(AsyncWebServerRequest * request)
   }
 
   String out = _assembleHead(request->version());
-  request->client()->write(out.c_str(), _headLength);
+  request->client()->write(out.c_str(), _headLength, ASYNC_WRITE_FLAG_COPY);
 
   _state = RESPONSE_WAIT_ACK;
 }
