@@ -1170,7 +1170,7 @@ AsyncResponseStream * AsyncWebServerRequest::beginResponseStream(const String& c
 
 void AsyncWebServerRequest::send(int code, const String& contentType, const char *content, bool nonCopyingSend)
 {
-  if (nonCopyingSend)
+  if (!nonCopyingSend)
   {
     send(beginResponse(code, contentType, String(content)));  // for backwards compatibility
   }
