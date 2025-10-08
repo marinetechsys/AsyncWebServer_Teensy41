@@ -1170,6 +1170,9 @@ AsyncResponseStream * AsyncWebServerRequest::beginResponseStream(const String& c
 
 void AsyncWebServerRequest::send(int code, const String& contentType, const char *content, bool nonCopyingSend)
 {
+  // !! NOTE: This boolean check was inverted in the original code.
+  // !! BUT: beginResponse() with a 'const char *' merely assigns the pointer for later use - which is
+  // !!      the non-copying path.
   if (!nonCopyingSend)
   {
     send(beginResponse(code, contentType, String(content)));  // for backwards compatibility
